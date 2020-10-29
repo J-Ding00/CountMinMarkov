@@ -42,7 +42,13 @@ class CountMin():
         if a is None or b is None:
             a = np.random.randint(1,prime)
             b = np.random.randint(prime)
-        return lambda x: ((a*x+b) % prime) % length_table
+        def h(x):
+            if isinstance(x, tuple):
+                return ((a*int.from_bytes("_".join(x).encode(), "big")+b) % prime) % length_table
+            elif isinstance(x, str):
+                return ((a*int.from_bytes(x.encode(), "big")+b) % prime) % length_table
+            return ((a*x+b) % prime) % length_table
+        return h
 
     def update(self, elem, sub_error=False):
         """
@@ -58,7 +64,7 @@ class CountMin():
                 self.heavy_hitters[elem] = self.get_count(elem, sub_error)
                 return
             new_count = self.get_count(elem, sub_error)
-            if new_count > self.min_heavy_count:
+            if new_count >= self.min_heavy_count:
                 self.min_heavy_count = min(self.heavy_hitters.values())
                 if elem not in self.heavy_hitters:
                     for key in self.heavy_hitters:
@@ -66,9 +72,6 @@ class CountMin():
                             self.heavy_hitters.pop(key)
                             break
                 self.heavy_hitters[elem] = new_count
-            
-
-
 
     def get_count(self, elem, sub_error=False):
         """
