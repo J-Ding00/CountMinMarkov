@@ -56,7 +56,7 @@ class CountMinMarkov(Markov):
 
     def state_prob(self, state, sub_error=False):
         """Returns the proabability of being in a given state."""
-        return max(self.state_sketch.get_count(state, sub_error=sub_error), 0) / self.total_tokens
+        return self.state_sketch.get_count(state, sub_error=sub_error) / self.total_tokens
 
     def trans_prob(self, from_state, to_state, sub_error=False):
         """Returns the probability of transitioning from from_state to to_state."""
@@ -66,12 +66,25 @@ class CountMinMarkov(Markov):
         return pair_count / max(from_count, 1)
 
     def get_start_state(self):
-        pass
+        """
+        Returns a random starting state, which begins with a capital letter. 
+        """
+        probs = np.empty(len(self.trans_sketch.heavy_hitters))
+        hh_list = list(self.trans_sketch.heavy_hitters.keys())
+        for i in range(len(hh_list)):
+            if str.isupper(hh_list[i][0][0]): # Limit to text starting with capital letter
+                probs[i] = self.trans_sketch.get_count(hh_list[i], sub_error=self.sub_error)
+            else:
+                probs[i] = 0
+        probs /= np.sum(probs)
+        return hh_list[np.random.choice(range(len(hh_list)), p=probs)][:-1]
 
-    def get_sentence(self, start_state, trans_bound):
+    def get_sentence(self, start_state=None, trans_bound=30):
         """
         Generate text, from start_state, using at most trans_bound predictions.
         """
+        if start_state is None:
+            start_state = self.get_start_state()
         sentence = " ".join(start_state)
         probs = np.empty(len(self.trans_sketch.heavy_hitters))
         hh_list = list(self.trans_sketch.heavy_hitters.keys())
@@ -116,10 +129,26 @@ class ExactMarkov(Markov):
         """Returns the probability of transitioning from from_state to to_state."""
         return self.bag_of_transitions[self.pair_states(from_state, to_state)] / self.bag_of_states[from_state]
 
-    def get_sentence(self, start_state, trans_bound):
+    def get_start_state(self):
+        """
+        Returns a random starting state, which begins with a capital letter. 
+        """
+        probs = np.empty(len(self.bag_of_transitions))
+        trans_list = list(self.bag_of_transitions.keys())
+        for i in range(len(trans_list)):
+            if str.isupper(trans_list[i][0][0]): # Limit to text starting with capital letter
+                probs[i] = self.bag_of_transitions[trans_list[i]]
+            else:
+                probs[i] = 0
+        probs /= np.sum(probs)
+        return trans_list[np.random.choice(range(len(trans_list)), p=probs)][:-1]
+
+    def get_sentence(self, start_state=None, trans_bound=30):
         """
         Generate a sentence, using at most trans_bound predictions.
         """
+        if start_state is None:
+            start_state = self.get_start_state()
         sentence = " ".join(start_state)
         probs = np.empty(len(self.bag_of_transitions))
         trans_list = list(self.bag_of_transitions.keys())

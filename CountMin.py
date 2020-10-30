@@ -79,7 +79,7 @@ class CountMin():
         """
         if sub_error:
             count = np.average([self.tables[i][self.hashfs[i](elem)] for i in range(len(self.tables))])
-            return (len(self.tables[0])*count - self.n) / (len(self.tables[0]) - 1)
+            return max((len(self.tables[0])*count - self.n) / (len(self.tables[0]) - 1), 0)
         return np.min([self.tables[i][self.hashfs[i](elem)] for i in range(len(self.tables))])
 
     @staticmethod
