@@ -81,3 +81,25 @@ class CountMin():
             count = np.average([self.tables[i][self.hashfs[i](elem)] for i in range(len(self.tables))])
             return (len(self.tables[0])*count - self.n) / (len(self.tables[0]) - 1)
         return np.min([self.tables[i][self.hashfs[i](elem)] for i in range(len(self.tables))])
+
+    @staticmethod
+    def evaluate_params(num_hash, length_table, n):
+        """
+        Given parameters for the number of hash functions (and tables),
+        and the length of a table, evaluate a bound on the expected error for any count
+        with a probability that all frequencies are less than this bound. 
+        """
+        error_bound = n / length_table
+        confidence = 1 - ((1 / (2 ** num_hash)) * n)
+        return error_bound, confidence
+
+    @staticmethod
+    def get_params(error_bound, confidence, n):
+        """
+        Given a bound on the expected error for any count, and a probability that all frequencies
+        are less than this bound, evaluate the table length and number of tables (and hash functions)
+        in order to reach these metrics.
+        """
+        length_table = n / error_bound
+        num_hash = np.log2(n / (1 - confidence))
+        return num_hash, length_table
