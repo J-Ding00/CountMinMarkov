@@ -5,6 +5,8 @@ Markov Chain Text Generator
 
 import numpy as np
 from collections import Counter
+from nltk.util import ngrams
+from nltk.tokenize import RegexpTokenizer 
 from CountMin import CountMin
 
 class Markov():
@@ -32,13 +34,29 @@ class Markov():
         """Update model based on observed transition from from_state to to_state."""
         pass
 
-    def parse_text(self, path, tokenizer, encoding=None):
+    @staticmethod
+    def get_tokenizer(num_predictors):
+        """
+        Return a function to break a string into a list of
+        num_predictors length shingles (tuples), preserving the order of
+        these shingles. A typical value for num_predictors is 2 or 3.
+        """
+        def tokenizer(text):
+            tokenizer = RegexpTokenizer("[a-zA-Z\-’']{1,}")
+            tokens = tokenizer.tokenize(text)
+            tokens = ngrams(tokens, num_predictors)
+            return list(tokens)
+        return tokenizer
+
+    def parse_text(self, path, tokenizer=None, encoding=None):
         """
         Parameters:
             path: A path to a .txt file to train the model on
-            tokenizer: string => list of list of strings, in order
+            tokenizer: string => list of tuple of strings, in order
             encoding: Text encoding of the file at path
         """
+        if tokenizer is None:
+            tokenizer = self.get_tokenizer(3)
         with open(path, 'r', encoding=encoding) as f:
             tokens = tokenizer(f.read())
             for i in range(len(tokens) - 1):
@@ -46,7 +64,9 @@ class Markov():
                 self.update_model(tokens[i], tokens[i+1])
 
 class CountMinMarkov(Markov):
-    def __init__(self, num_hash, length_table, transition_count, track_state_probs=False, sub_error=False):
+    def __init__(self, num_hash, length_table, transition_count=None, track_state_probs=False, sub_error=False):
+        if transition_count is None:
+            transition_count = num_hash * length_table
         self.trans_sketch = CountMin(num_hash, length_table, heavy_hitters=transition_count)
         self.track_state_probs = track_state_probs
         self.sub_error = sub_error
