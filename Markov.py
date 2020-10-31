@@ -42,7 +42,7 @@ class Markov():
         these shingles. A typical value for num_predictors is 2 or 3.
         """
         def tokenizer(text):
-            tokenizer = RegexpTokenizer("[a-zA-Z\-’']{1,}")
+            tokenizer = RegexpTokenizer("[a-zA-Z\-’'.]{1,}")
             tokens = tokenizer.tokenize(text)
             tokens = ngrams(tokens, num_predictors)
             return list(tokens)
@@ -65,6 +65,15 @@ class Markov():
 
 class CountMinMarkov(Markov):
     def __init__(self, num_hash, length_table, transition_count=None, track_state_probs=False, sub_error=False):
+        """
+        An approximate Markov-Chain text generator.
+        Parameters:
+            num_hash: The number of hash functions (and tables) used in the backing count-min sketch(s)
+            length_table: The number of elements in each table for the backing count-min sketch(s)
+            transition_count: The number of heavy hitting (most frequent) transitions stored for generation
+            track_state_probs: Track counts of each state, state_prob will be defined iff track_state_probs
+            sub_error: Subtract the expected value of the error on each count when using the count-min sketch
+        """
         if transition_count is None:
             transition_count = num_hash * length_table
         self.trans_sketch = CountMin(num_hash, length_table, heavy_hitters=transition_count)
@@ -121,8 +130,10 @@ class CountMinMarkov(Markov):
             probs /= prob_sum # normalize probabilities
             next_trans = hh_list[np.random.choice(range(len(hh_list)), p=probs)]
             sentence += " " + next_trans[-1]
+            if sentence[-1] == '.': # Ending on a period, end here
+                return sentence
             start_state = next_trans[1:]
-        return sentence
+        return sentence + '.'
         
 
     def update_model(self, from_state, to_state):
@@ -136,6 +147,11 @@ class CountMinMarkov(Markov):
 
 class ExactMarkov(Markov):
     def __init__(self, track_state_probs=False):
+        """
+        A Markov-chain text generator.
+        Parameters:
+            track_state_probs: Track counts of each state, state_prob will be defined iff track_state_probs
+        """
         self.bag_of_states = Counter()
         self.bag_of_transitions = Counter()
         self.total_tokens = 0
@@ -185,8 +201,10 @@ class ExactMarkov(Markov):
             probs /= prob_sum # normalize probabilities
             next_trans = trans_list[np.random.choice(range(len(trans_list)), p=probs)]
             sentence += " " + next_trans[-1]
+            if sentence[-1] == '.': # Ending on a period, end here
+                return sentence
             start_state = next_trans[1:]
-        return sentence
+        return sentence + '.'
 
     def update_model(self, from_state, to_state):
         """Update model based on observed transition from from_state to to_state."""
