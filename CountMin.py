@@ -60,18 +60,11 @@ class CountMin():
             self.tables[i][self.hashfs[i](elem)] += 1
         if self.hh_count > 0:
             # Update heavy hitters
-            if len(self.heavy_hitters) < self.hh_count and elem not in self.heavy_hitters:
-                self.heavy_hitters[elem] = self.get_count(elem, sub_error)
-                return
             new_count = self.get_count(elem, sub_error)
-            if new_count >= self.min_heavy_count:
-                self.min_heavy_count = min(self.heavy_hitters.values())
-                if elem not in self.heavy_hitters:
-                    for key in self.heavy_hitters:
-                        if self.heavy_hitters[key] == self.min_heavy_count:
-                            self.heavy_hitters.pop(key)
-                            break
+            if new_count >= self.n / self.hh_count:
                 self.heavy_hitters[elem] = new_count
+            elif elem in self.heavy_hitters:
+                self.heavy_hitters.pop(elem)
 
     def get_count(self, elem, sub_error=False):
         """
