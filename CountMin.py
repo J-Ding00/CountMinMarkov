@@ -89,7 +89,7 @@ class CountMin():
         and the length of a table, evaluate a bound on the expected error for any count
         with a probability that all frequencies are less than this bound. 
         """
-        error_bound = n / length_table
+        error_bound = (2*n) / length_table
         confidence = 1 - ((1 / (2 ** num_hash)) * n)
         return error_bound, confidence
 
@@ -100,6 +100,6 @@ class CountMin():
         are less than this bound, evaluate the table length and number of tables (and hash functions)
         in order to reach these metrics.
         """
-        length_table = n / error_bound
+        length_table = (2*n) / error_bound
         num_hash = np.log2(n / (1 - confidence))
         return num_hash, length_table
