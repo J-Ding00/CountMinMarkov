@@ -108,19 +108,21 @@ class CountMinMarkov(Markov):
         probs /= np.sum(probs)
         return hh_list[np.random.choice(range(len(hh_list)), p=probs)][:-1]
 
-    def get_sentence(self, start_state=None, trans_bound=30):
+    def get_sentence(self, start_state=None, trans_bound=30, sub_error=None):
         """
         Generate text, from start_state, using at most trans_bound predictions.
         """
         if start_state is None:
             start_state = self.get_start_state()
+        if sub_error is None:
+            sub_error = self.sub_error
         sentence = " ".join(start_state)
         probs = np.empty(len(self.trans_sketch.heavy_hitters))
         hh_list = list(self.trans_sketch.heavy_hitters.keys())
         for i in range(trans_bound):
             for j in range(len(hh_list)):
                 if hh_list[j][:-1] == start_state:
-                    probs[j] = self.trans_sketch.get_count(hh_list[j], sub_error=self.sub_error)
+                    probs[j] = self.trans_sketch.get_count(hh_list[j], sub_error=sub_error)
                 else:
                     probs[j] = 0
                 j += 1
