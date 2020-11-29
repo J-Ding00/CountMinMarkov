@@ -66,7 +66,11 @@ class Markov():
                 self.update_model(tokens[i], tokens[i+1])
 
 class MaxDegreeMarkov(Markov):
-    def __init__(self, max_trans, iterations):
+    """
+    Markov-chain text generator seeking to maximize the number of distinct sentences
+    which can be generated using only max_trans transitions.
+    """
+    def __init__(self, max_trans):
         self.total_tokens = 0
         self.out_trans = {} # Map state to set of transitions with that prefix
         self.in_trans = {} # Map state to set of transitions ending with that suffix
@@ -119,6 +123,9 @@ class MaxDegreeMarkov(Markov):
                 self.update_model(tokens[i], tokens[i+1])
 
     def prediction_space(self, num_trans):
+        """
+        Returns the number of sentences which can be generated at each token length up to num_trans.
+        """
         num_sentences = [len(self.out_trans)]
         sentences_at_state = {}
         for state in self.out_trans:
@@ -137,6 +144,9 @@ class MaxDegreeMarkov(Markov):
         return num_sentences
 
     def get_priority(self, from_state, to_state):
+        """
+        Return product of in-degree of from_state with out-degree of to_state.
+        """
         if from_state in self.in_trans and to_state in self.out_trans:
             return len(self.in_trans[from_state]) * len(self.out_trans[to_state])
         else:
@@ -147,7 +157,6 @@ class MaxDegreeMarkov(Markov):
         Update model based on observed transition from from_state to to_state.
         States are indexable collections of strings.
         """
-        #state = from_state[1:]
         full_trans = self.pair_states(from_state, to_state)
         if from_state in self.out_trans:
             self.out_trans[from_state].add(full_trans)
