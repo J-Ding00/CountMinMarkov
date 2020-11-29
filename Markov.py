@@ -77,6 +77,19 @@ class MaxDegreeMarkov(Markov):
         self.max_trans = max_trans
         self.trans_pq = heapdict() # Elements are transitions with priority in_degree(from_state)*out_degree(to_state)
 
+    def state_prob(self, state):
+        """Returns the proabability of being in a given state."""
+        if state in self.out_trans:
+            return 1 / len(self.out_trans)
+
+    def trans_prob(self, from_state, to_state):
+        """Returns the probability of transitioning from from_state to to_state."""
+        full_trans = self.pair_states(from_state,to_state)
+        if from_state in self.out_trans and full_trans in self.out_trans[from_state]:
+            return 1 / len(self.out_trans[from_state])
+        else:
+            return 0
+
     def get_start_state(self):
         """
         Returns a random starting state, which begins with a capital letter. 
