@@ -7,6 +7,8 @@ import numpy as np
 from collections import Counter
 from nltk.util import ngrams
 from nltk.tokenize import RegexpTokenizer 
+from heapdict import heapdict
+from collections import defaultdict
 from CountMin import CountMin
 
 class Markov():
@@ -62,6 +64,117 @@ class Markov():
             for i in range(len(tokens) - 1):
                 self.total_tokens += 1
                 self.update_model(tokens[i], tokens[i+1])
+
+class MaxDegreeMarkov(Markov):
+    def __init__(self, max_trans, iterations):
+        self.total_tokens = 0
+        self.out_trans = {} # Map state to set of transitions with that prefix
+        self.in_trans = {} # Map state to set of transitions ending with that suffix
+        self.max_trans = max_trans
+        self.trans_pq = heapdict() # Elements are transitions with priority in_degree(from_state)*out_degree(to_state)
+
+    def get_start_state(self):
+        """
+        Returns a random starting state, which begins with a capital letter. 
+        """
+        start_states = []
+        for state in self.out_trans:
+            if str.isupper(state[0][0]):
+                start_states.append(state)
+        return start_states[np.random.randint(len(start_states))]
+
+    def get_sentence(self, start_state=None, trans_bound=30):
+        """
+        Generate text, from start_state, using at most trans_bound predictions.
+        """
+        if start_state is None:
+            start_state = self.get_start_state()
+        sentence = " ".join(start_state)
+        curr_state = start_state
+        for _ in range(trans_bound):
+            if curr_state not in self.out_trans:
+                return sentence + '.'
+            trans = list(self.out_trans[curr_state])[np.random.randint(len(self.out_trans[curr_state]))]
+            sentence += ' ' + trans[-1]
+            if sentence[-1] == '.': # Ending on a period, end here
+                return sentence
+            curr_state = trans[1:]
+        return sentence + '.'
+
+    def parse_text(self, path, tokenizer=None, encoding=None):
+        """
+        Parameters:
+            path: A path to a .txt file to train the model on
+            tokenizer: string => list of tuple of strings, in order
+            encoding: Text encoding of the file at path
+        """
+        if tokenizer is None:
+            tokenizer = self.get_tokenizer(3)
+        with open(path, 'r', encoding=encoding) as f:
+            text = f.read().split('.')
+            np.random.shuffle(text)
+            tokens = tokenizer(". ".join(text))
+            for i in range(len(tokens) - 1):
+                self.total_tokens += 1
+                self.update_model(tokens[i], tokens[i+1])
+
+    def prediction_space(self, num_trans):
+        num_sentences = [len(self.out_trans)]
+        sentences_at_state = {}
+        for state in self.out_trans:
+            sentences_at_state[state] = 1
+        for _ in range(num_trans):
+            sentence_count = 0
+            curr_sentences_at_state = defaultdict(int)
+            for state in sentences_at_state:
+                if state in self.out_trans:
+                    for trans in self.out_trans[state]:
+                        to_state = trans[1:]
+                        curr_sentences_at_state[to_state] += sentences_at_state[state]
+                        sentence_count += sentences_at_state[state]
+            sentences_at_state = curr_sentences_at_state
+            num_sentences.append(sentence_count)
+        return num_sentences
+
+    def get_priority(self, from_state, to_state):
+        if from_state in self.in_trans and to_state in self.out_trans:
+            return len(self.in_trans[from_state]) * len(self.out_trans[to_state])
+        else:
+            return 0
+
+    def update_model(self, from_state, to_state):
+        """
+        Update model based on observed transition from from_state to to_state.
+        States are indexable collections of strings.
+        """
+        #state = from_state[1:]
+        full_trans = self.pair_states(from_state, to_state)
+        if from_state in self.out_trans:
+            self.out_trans[from_state].add(full_trans)
+        else:
+            self.out_trans[from_state] = {full_trans}
+        if to_state in self.in_trans:
+            self.in_trans[to_state].add(full_trans)
+        else:
+            self.in_trans[to_state] = {full_trans}
+        priority = self.get_priority(from_state,to_state)
+        self.trans_pq[full_trans] = priority
+        while len(self.trans_pq) > self.max_trans:
+            # Must remove some transitions to keep memory usage reasonable
+            trans, priority = self.trans_pq.popitem()
+            from_state = trans[:-1]
+            to_state = trans[1:]
+            curr_priority = self.get_priority(from_state,to_state)
+            if priority < curr_priority: # Priority increased at some point
+                self.trans_pq[trans] = curr_priority
+            else:
+                # Remove low priority transition
+                self.in_trans[to_state].remove(trans)
+                self.out_trans[from_state].remove(trans)
+                if len(self.in_trans[to_state]) == 0:
+                    self.in_trans.pop(to_state)
+                if len(self.out_trans[from_state]) == 0:
+                    self.out_trans.pop(from_state)
 
 class CountMinMarkov(Markov):
     def __init__(self, num_hash, length_table, transition_count=None, track_state_probs=False, sub_error=False):
