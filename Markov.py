@@ -26,9 +26,10 @@ class Markov():
         """Returns the probability of transitioning from from_state to to_state."""
         pass
 
-    def get_sentence(self, start_state, trans_bound):
+    def get_sentence(self, start_state, trans_bound, stop_on_period=True):
         """
         Generate text, from start_state, using at most trans_bound predictions.
+        If stop_on_period, finish text generation upon observing an ending period.
         """
         pass
 
@@ -80,7 +81,9 @@ class MaxDegreeMarkov(Markov):
     def state_prob(self, state):
         """Returns the proabability of being in a given state."""
         if state in self.out_trans:
-            return 1 / len(self.out_trans)
+            return len(self.out_trans[state]) / len(self.trans_pq)
+        else:
+            return 0
 
     def trans_prob(self, from_state, to_state):
         """Returns the probability of transitioning from from_state to to_state."""
@@ -93,16 +96,18 @@ class MaxDegreeMarkov(Markov):
     def get_start_state(self):
         """
         Returns a random starting state, which begins with a capital letter. 
+        This is done by uniformly choosing a transition then extracting the from_state.
         """
         start_states = []
-        for state in self.out_trans:
-            if str.isupper(state[0][0]):
-                start_states.append(state)
-        return start_states[np.random.randint(len(start_states))]
+        for trans in self.trans_pq:
+            if str.isupper(trans[0][0]):
+                start_states.append(trans)
+        return start_states[np.random.randint(len(start_states))][:-1]
 
-    def get_sentence(self, start_state=None, trans_bound=30):
+    def get_sentence(self, start_state=None, trans_bound=30, stop_on_period=True):
         """
         Generate text, from start_state, using at most trans_bound predictions.
+        If stop_on_period, finish text generation upon observing an ending period.
         """
         if start_state is None:
             start_state = self.get_start_state()
@@ -113,7 +118,7 @@ class MaxDegreeMarkov(Markov):
                 return sentence + '.'
             trans = list(self.out_trans[curr_state])[np.random.randint(len(self.out_trans[curr_state]))]
             sentence += ' ' + trans[-1]
-            if sentence[-1] == '.': # Ending on a period, end here
+            if stop_on_period and sentence[-1] == '.': # Ending on a period, end here
                 return sentence
             curr_state = trans[1:]
         return sentence + '.'
@@ -198,6 +203,89 @@ class MaxDegreeMarkov(Markov):
                 if len(self.out_trans[from_state]) == 0:
                     self.out_trans.pop(from_state)
 
+    def expected_trans(self, trans_bound=30):
+        """
+        Returns the expected number of word predictions which can occur until
+        there are no outgoing transitions from the current state, bounded by trans_bound transitions.
+        Assumes sentence generation continues after ending on a period.
+        """
+        expected = 0
+        trans_weights = {}
+        init_weight = 1 / len(self.trans_pq)
+        for trans in self.trans_pq:
+            trans_weights[trans] = init_weight # Total weights should sum to 1
+        for trans_num in range(1,trans_bound+1):
+            iter_weight = 0
+            curr_trans_weights = defaultdict(float)
+            for trans in trans_weights:
+                to_state = trans[1:]
+                if to_state in self.out_trans:
+                    split_weight = trans_weights[trans] / len(self.out_trans[to_state])
+                    for to_trans in self.out_trans[to_state]:
+                        curr_trans_weights[to_trans] += split_weight
+                else:
+                    iter_weight += trans_weights[trans]
+            expected += iter_weight * trans_num
+            trans_weights = curr_trans_weights
+        return expected + (sum(trans_weights.values()) * (trans_bound + 1))
+
+class BatchMarkov(MaxDegreeMarkov):
+    """
+    Markov-chain text generator seeking to maximize the expected value of the
+    number of transitions traversed in the model before reaching a state with
+    no outgoing transitions.
+
+    Only including transitions which form a cycle would accomplish this, but
+    max_trans transitions are stored even if having fewer transitions would
+    increase the expected number of transitions before a state without outgoing transitions.
+    """
+    def __init__(self, max_trans, batch_size=1000, smoothing=0.1):
+        super().__init__(max_trans)
+        self.smoothing = smoothing
+        self.batch_size = batch_size
+        self.default_priority = 1
+
+    def update_model(self, from_state, to_state):
+        """
+        Update model based on observed transition from from_state to to_state.
+        States are indexable collections of strings.
+        """
+        full_trans = self.pair_states(from_state, to_state)
+        if from_state in self.out_trans:
+            self.out_trans[from_state].add(full_trans)
+        else:
+            self.out_trans[from_state] = {full_trans}
+        if full_trans not in self.trans_pq:
+            self.trans_pq[full_trans] = self.default_priority
+        if len(self.trans_pq) > self.max_trans + self.batch_size:
+            # Apply inference, accumulating probabilities from transitions with to_state same as from_state in trans
+            next_priorities = defaultdict(float)
+            for trans in self.trans_pq:
+                to_state = trans[1:]
+                if to_state in self.out_trans: # Otherwise, we have no next transition available
+                    split_priority = self.trans_pq[trans] / len(self.out_trans[to_state])
+                    for to_trans in self.out_trans[to_state]:
+                        next_priorities[to_trans] += split_priority
+            # Add smoothing
+            magnitude = np.linalg.norm(list(next_priorities.values()))
+            smoothing_factor = (1 - self.smoothing) / magnitude if magnitude > 0 else 1
+            smoothing_constant = (self.smoothing / len(next_priorities)) / magnitude if magnitude > 0 else 1
+            self.trans_pq = heapdict()
+            for trans in next_priorities:
+                self.trans_pq[trans] = next_priorities[trans] * smoothing_factor + smoothing_constant
+            while len(self.trans_pq) > self.max_trans:
+                # Must remove some transitions to keep memory usage reasonable
+                trans, priority = self.trans_pq.popitem()
+                from_state = trans[:-1]
+                to_state = trans[1:]
+                # Remove low priority transition
+                self.out_trans[from_state].remove(trans)
+                if len(self.out_trans[from_state]) == 0:
+                    self.out_trans.pop(from_state)
+            # Set default priority to mean of priorities
+            self.default_priority = sum(p for p in self.trans_pq.values()) / len(self.trans_pq)
+            
+
 class CountMinMarkov(Markov):
     def __init__(self, num_hash, length_table, transition_count=None, track_state_probs=False, sub_error=False):
         """
@@ -243,9 +331,10 @@ class CountMinMarkov(Markov):
         probs /= np.sum(probs)
         return hh_list[np.random.choice(range(len(hh_list)), p=probs)][:-1]
 
-    def get_sentence(self, start_state=None, trans_bound=30, sub_error=None):
+    def get_sentence(self, start_state=None, trans_bound=30, stop_on_period=True, sub_error=None):
         """
         Generate text, from start_state, using at most trans_bound predictions.
+        If stop_on_period, finish text generation upon observing an ending period.
         """
         if start_state is None:
             start_state = self.get_start_state()
@@ -267,7 +356,7 @@ class CountMinMarkov(Markov):
             probs /= prob_sum # normalize probabilities
             next_trans = hh_list[np.random.choice(range(len(hh_list)), p=probs)]
             sentence += " " + next_trans[-1]
-            if sentence[-1] == '.': # Ending on a period, end here
+            if stop_on_period and sentence[-1] == '.': # Ending on a period, end here
                 return sentence
             start_state = next_trans[1:]
         return sentence + '.'
@@ -316,9 +405,10 @@ class ExactMarkov(Markov):
         probs /= np.sum(probs)
         return trans_list[np.random.choice(range(len(trans_list)), p=probs)][:-1]
 
-    def get_sentence(self, start_state=None, trans_bound=30):
+    def get_sentence(self, start_state=None, trans_bound=30, stop_on_period=True):
         """
         Generate a sentence, using at most trans_bound predictions.
+        If stop_on_period, finish text generation upon observing an ending period.
         """
         if start_state is None:
             start_state = self.get_start_state()
@@ -338,7 +428,7 @@ class ExactMarkov(Markov):
             probs /= prob_sum # normalize probabilities
             next_trans = trans_list[np.random.choice(range(len(trans_list)), p=probs)]
             sentence += " " + next_trans[-1]
-            if sentence[-1] == '.': # Ending on a period, end here
+            if stop_on_period and sentence[-1] == '.': # Ending on a period, end here
                 return sentence
             start_state = next_trans[1:]
         return sentence + '.'
