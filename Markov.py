@@ -59,7 +59,7 @@ class Markov():
             encoding: Text encoding of the file at path
         """
         if tokenizer is None:
-            tokenizer = self.get_tokenizer(3)
+            tokenizer = self.get_tokenizer(2)
         with open(path, 'r', encoding=encoding) as f:
             tokens = tokenizer(f.read())
             for i in range(len(tokens) - 1):
@@ -131,7 +131,7 @@ class MaxDegreeMarkov(Markov):
             encoding: Text encoding of the file at path
         """
         if tokenizer is None:
-            tokenizer = self.get_tokenizer(3)
+            tokenizer = self.get_tokenizer(2)
         with open(path, 'r', encoding=encoding) as f:
             text = f.read().split('.')
             np.random.shuffle(text)
