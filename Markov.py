@@ -214,7 +214,7 @@ class MaxDegreeMarkov(Markov):
         init_weight = 1 / len(self.trans_pq)
         for trans in self.trans_pq:
             trans_weights[trans] = init_weight # Total weights should sum to 1
-        for trans_num in range(1,trans_bound+1):
+        for trans_num in range(1,trans_bound):
             iter_weight = 0
             curr_trans_weights = defaultdict(float)
             for trans in trans_weights:
@@ -227,7 +227,34 @@ class MaxDegreeMarkov(Markov):
                     iter_weight += trans_weights[trans]
             expected += iter_weight * trans_num
             trans_weights = curr_trans_weights
-        return expected + (sum(trans_weights.values()) * (trans_bound + 1))
+        return expected + (sum(trans_weights.values()) * trans_bound + 1)
+
+    def variance_trans(self, trans_bound=30):
+        """
+        Returns the variance of the number of word predictions which can occur until
+        there are no outgoing transitions from the current state, bounded by trans_bound transitions.
+        Assumes sentence generation continues after ending on a period.
+        """
+        expected = self.expected_trans(trans_bound=trans_bound)
+        variance = 0
+        trans_weights = {}
+        init_weight = 1 / len(self.trans_pq)
+        for trans in self.trans_pq:
+            trans_weights[trans] = init_weight # Total weights should sum to 1
+        for trans_num in range(1,trans_bound):
+            iter_weight = 0
+            curr_trans_weights = defaultdict(float)
+            for trans in trans_weights:
+                to_state = trans[1:]
+                if to_state in self.out_trans:
+                    split_weight = trans_weights[trans] / len(self.out_trans[to_state])
+                    for to_trans in self.out_trans[to_state]:
+                        curr_trans_weights[to_trans] += split_weight
+                else:
+                    iter_weight += trans_weights[trans]
+            variance += iter_weight * ((trans_num - expected) ** 2)
+            trans_weights = curr_trans_weights
+        return variance + (sum(trans_weights.values()) * ((trans_bound - expected) ** 2))
 
 class BatchMarkov(MaxDegreeMarkov):
     """
@@ -239,11 +266,56 @@ class BatchMarkov(MaxDegreeMarkov):
     max_trans transitions are stored even if having fewer transitions would
     increase the expected number of transitions before a state without outgoing transitions.
     """
-    def __init__(self, max_trans, batch_size=1000, smoothing=0.1):
+    def __init__(self, max_trans, iter_per_batch=3, batch_size=1000, smoothing=0.1):
         super().__init__(max_trans)
         self.smoothing = smoothing
         self.batch_size = batch_size
-        self.default_priority = 1
+        self.iter_per_batch = iter_per_batch
+        self.transitions = set()
+
+    def apply_iteration(self, apply_filtering):
+        """
+        For each weight assigned to a transition in self.trans_pq, equally
+        distribute this weight to all possible successors for the weights of
+        the next iteration.
+        
+        If apply_filtering, remove transitions from the model until the size of the
+        model is <= self.max_trans. Priority is based on the product of weight received
+        during the previous iteration with sum of the weights of any successor transitions. 
+        """
+        # Get next mapping from transitions to weights
+        next_weights = defaultdict(float)
+        out_trans_sums = {}
+        for key in self.out_trans: # Add weights of transitions reached from key
+            out_trans_sums[key] = sum(self.trans_pq[t] for t in self.out_trans[key])
+        for trans in self.transitions:
+            to_state = trans[1:]
+            if to_state in self.out_trans: # Pass weight to successors
+                split_priority = self.trans_pq[trans] / len(self.out_trans[to_state])
+                for to_trans in self.out_trans[to_state]:
+                    next_weights[to_trans] += split_priority
+                self.trans_pq[trans] *= out_trans_sums[to_state] # Product of in-weights and out-weights
+            else:
+                self.trans_pq[trans] = 0 # Unable to pass on any weight
+        # Filter trans_pq of terms which couldn't pass enough weight to next iteration
+        if apply_filtering:
+            while len(self.trans_pq) > self.max_trans:
+                trans, priority = self.trans_pq.popitem()
+                self.transitions.remove(trans)
+                from_state = trans[:-1]
+                to_state = trans[1:]
+                # Remove low priority transition
+                self.out_trans[from_state].remove(trans)
+                if len(self.out_trans[from_state]) == 0:
+                    self.out_trans.pop(from_state)
+        # Get smoothing parameters
+        magnitude = np.linalg.norm(list(next_weights.values()))
+        avg = sum(p for p in next_weights.values()) / len(next_weights)
+        smoothing_factor = (1 - self.smoothing) / magnitude if magnitude > 0 else 1
+        smoothing_constant = (self.smoothing * avg) / magnitude if magnitude > 0 else 1
+        # Update trans_pq with new weights while applying smoothing
+        for trans in self.transitions:
+            self.trans_pq[trans] = next_weights[trans] * smoothing_factor + smoothing_constant
 
     def update_model(self, from_state, to_state):
         """
@@ -256,35 +328,18 @@ class BatchMarkov(MaxDegreeMarkov):
         else:
             self.out_trans[from_state] = {full_trans}
         if full_trans not in self.trans_pq:
-            self.trans_pq[full_trans] = self.default_priority
+            self.trans_pq[full_trans] = 1
+            self.transitions.add(full_trans)
         if len(self.trans_pq) > self.max_trans + self.batch_size:
-            # Apply inference, accumulating probabilities from transitions with to_state same as from_state in trans
-            next_priorities = defaultdict(float)
-            for trans in self.trans_pq:
-                to_state = trans[1:]
-                if to_state in self.out_trans: # Otherwise, we have no next transition available
-                    split_priority = self.trans_pq[trans] / len(self.out_trans[to_state])
-                    for to_trans in self.out_trans[to_state]:
-                        next_priorities[to_trans] += split_priority
-            # Add smoothing
-            magnitude = np.linalg.norm(list(next_priorities.values()))
-            smoothing_factor = (1 - self.smoothing) / magnitude if magnitude > 0 else 1
-            smoothing_constant = (self.smoothing / len(next_priorities)) / magnitude if magnitude > 0 else 1
-            self.trans_pq = heapdict()
-            for trans in next_priorities:
-                self.trans_pq[trans] = next_priorities[trans] * smoothing_factor + smoothing_constant
-            while len(self.trans_pq) > self.max_trans:
-                # Must remove some transitions to keep memory usage reasonable
-                trans, priority = self.trans_pq.popitem()
-                from_state = trans[:-1]
-                to_state = trans[1:]
-                # Remove low priority transition
-                self.out_trans[from_state].remove(trans)
-                if len(self.out_trans[from_state]) == 0:
-                    self.out_trans.pop(from_state)
-            # Set default priority to mean of priorities
-            self.default_priority = sum(p for p in self.trans_pq.values()) / len(self.trans_pq)
+            # Reduce stores transitions by batch_size to max_trans
+            for trans in self.transitions:
+                self.trans_pq[trans] = 1
+            for _ in range(self.iter_per_batch - 1):
+                self.apply_iteration(False)
+            self.apply_iteration(True) # Filter trans_pq of terms which couldn't pass enough weight to next iteration
             
+class CMBatchMarkov(BatchMarkov):
+    pass
 
 class CountMinMarkov(Markov):
     def __init__(self, num_hash, length_table, transition_count=None, track_state_probs=False, sub_error=False):
