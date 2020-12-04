@@ -61,8 +61,8 @@ class CountMin():
         if self.hh_count > 0:
             # Update heavy hitters
             self.heavy_hitters[elem] = self.get_count(elem, sub_error)
-            if len(self.heavy_hitters) > self.hh_count:
-                # Remove least count
+            while len(self.heavy_hitters) > self.hh_count:
+                # Remove least count, currently priorities elems added later, have more error
                 self.heavy_hitters.popitem()
 
     def get_count(self, elem, sub_error=False):

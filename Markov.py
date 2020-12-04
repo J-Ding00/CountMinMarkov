@@ -71,7 +71,8 @@ class MaxDegreeMarkov(Markov):
     Markov-chain text generator seeking to maximize the number of distinct sentences
     which can be generated using only max_trans transitions.
     """
-    def __init__(self, max_trans):
+    def __init__(self, max_trans, null_weight=0.1):
+        self.null_weight = null_weight
         self.total_tokens = 0
         self.out_trans = {} # Map state to set of transitions with that prefix
         self.in_trans = {} # Map state to set of transitions ending with that suffix
@@ -142,7 +143,7 @@ class MaxDegreeMarkov(Markov):
 
     def prediction_space(self, num_trans):
         """
-        Returns the number of sentences which can be generated at each token length up to num_trans.
+        Returns the number of sentences which can be generated at each number of predictions from 0 to num_trans.
         """
         num_sentences = [len(self.out_trans)]
         sentences_at_state = {}
@@ -165,10 +166,9 @@ class MaxDegreeMarkov(Markov):
         """
         Return product of in-degree of from_state with out-degree of to_state.
         """
-        if from_state in self.in_trans and to_state in self.out_trans:
-            return len(self.in_trans[from_state]) * len(self.out_trans[to_state])
-        else:
-            return 0
+        in_weight = len(self.in_trans[from_state])+self.null_weight if from_state in self.in_trans else self.null_weight
+        out_weight = len(self.out_trans[to_state])+self.null_weight if to_state in self.out_trans else self.null_weight
+        return in_weight * out_weight
 
     def update_model(self, from_state, to_state):
         """
@@ -266,7 +266,7 @@ class BatchMarkov(MaxDegreeMarkov):
     max_trans transitions are stored even if having fewer transitions would
     increase the expected number of transitions before a state without outgoing transitions.
     """
-    def __init__(self, max_trans, iter_per_batch=3, batch_size=1000, smoothing=0.1):
+    def __init__(self, max_trans, iter_per_batch=3, batch_size=1000, smoothing=0.05):
         super().__init__(max_trans)
         self.smoothing = smoothing
         self.batch_size = batch_size
@@ -295,8 +295,6 @@ class BatchMarkov(MaxDegreeMarkov):
                 for to_trans in self.out_trans[to_state]:
                     next_weights[to_trans] += split_priority
                 self.trans_pq[trans] *= out_trans_sums[to_state] # Product of in-weights and out-weights
-            else:
-                self.trans_pq[trans] = 0 # Unable to pass on any weight
         # Filter trans_pq of terms which couldn't pass enough weight to next iteration
         if apply_filtering:
             while len(self.trans_pq) > self.max_trans:
